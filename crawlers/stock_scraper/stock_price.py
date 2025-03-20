@@ -1,9 +1,10 @@
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
+import mplfinance as mpf
 
-# 定義函數來獲取個股指定日期區間的成交價（支援跨月）
-def get_stock_closing_price(stock_code, start_date, end_date):
+# 定義函數來獲取個股指定日期區間的交易資料
+def get_stock_data(stock_code, start_date, end_date):
     # TWSE API 端點
     url = "https://www.twse.com.tw/exchangeReport/STOCK_DAY"
     
@@ -37,17 +38,18 @@ def get_stock_closing_price(stock_code, start_date, end_date):
             # 轉換為 DataFrame
             df = pd.DataFrame(raw_data, columns=columns)
 
-            # 只保留日期和收盤價
-            df = df[["日期", "收盤價"]]
+            # 只保留日期、開盤價、最高價、最低價、收盤價
+            df = df[["日期", "開盤價", "最高價", "最低價", "收盤價"]]
 
             # 處理日期格式（民國年轉西元年）
             df["日期"] = df["日期"].apply(lambda x: str(int(x.split("/")[0]) + 1911) + "-" + x.split("/")[1] + "-" + x.split("/")[2])
             df["日期"] = pd.to_datetime(df["日期"])
 
-            # 處理收盤價
-            df["收盤價"] = df["收盤價"].str.replace(",", "")
-            df["收盤價"] = df["收盤價"].str.replace("X", "")
-            df["收盤價"] = pd.to_numeric(df["收盤價"], errors="coerce")
+            # 處理數值欄位
+            for col in ["開盤價", "最高價", "最低價", "收盤價"]:
+                df[col] = df[col].str.replace(",", "")  # 移除千分位逗號
+                df[col] = df[col].str.replace("X", "")  # 移除 'X'
+                df[col] = pd.to_numeric(df[col], errors="coerce")  # 轉為浮點數，無法轉換的值設為 NaN
 
             dfs.append(df)
 
@@ -65,8 +67,9 @@ def get_stock_closing_price(stock_code, start_date, end_date):
     # 篩選日期區間
     df = df[(df["日期"] >= start_date) & (df["日期"] <= end_date)]
 
-    # 格式化收盤價
-    df["收盤價"] = df["收盤價"].apply(lambda x: "{:.2f}".format(x) if pd.notnull(x) else "N/A")
+    # 格式化數值欄位
+    for col in ["開盤價", "最高價", "最低價", "收盤價"]:
+        df[col] = df[col].apply(lambda x: round(x, 2) if pd.notnull(x) else x)
 
     return df
 
@@ -74,7 +77,7 @@ def get_stock_closing_price(stock_code, start_date, end_date):
 if __name__ == "__main__":
     # 設置參數
     stock_code = "2330"  # 台積電股票代碼
-    start_date = "2025-02-01"  # 開始日期（跨月）
+    start_date = "2025-02-01"  # 開始日期
     end_date = "2025-03-20"  # 結束日期
 
     # 將日期轉為 datetime 格式
@@ -82,7 +85,7 @@ if __name__ == "__main__":
     end_date_dt = datetime.strptime(end_date, "%Y-%m-%d")
 
     # 獲取資料
-    df = get_stock_closing_price(stock_code, start_date_dt, end_date_dt)
+    df = get_stock_data(stock_code, start_date_dt, end_date_dt)
 
     if df is not None and not df.empty:
         # 設置 pandas 顯示選項以處理中文對齊
@@ -91,7 +94,21 @@ if __name__ == "__main__":
         pd.set_option("display.expand_frame_repr", False)
 
         # 顯示表格
-        print(f"\n股票代碼 {stock_code} 的成交價（{start_date} 至 {end_date}）：")
+        print(f"\n股票代碼 {stock_code} 的交易資料（{start_date} 至 {end_date}）：")
         print(df.to_string(index=False))
+
+        # 準備繪製 K 線圖
+        # 將日期設為索引，並重新命名欄位以符合 mplfinance 的要求
+        df.set_index("日期", inplace=True)
+        df.rename(columns={
+            "開盤價": "Open",
+            "最高價": "High",
+            "最低價": "Low",
+            "收盤價": "Close"
+        }, inplace=True)
+
+        # 繪製 K 線圖
+        mpf.plot(df, type="candle", style="charles", title=f"{stock_code} K線圖 ({start_date} 至 {end_date})", ylabel="價格 (TWD)", figsize=(12, 6))
+
     else:
         print("無法獲取資料，請檢查股票代碼或日期是否正確。")
